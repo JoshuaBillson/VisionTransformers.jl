@@ -106,6 +106,7 @@ end
 
 """
     ConvAttention(dim::Int; kernel=(3,3), q_stride=(1,1), kv_stride=(1,1), nheads=8, attn_dropout_prob=0.0, proj_dropout_prob=0.0, norm=:BN, qkv_bias=false)
+    ConvAttention(dim::Int; kernel=(3,3), q_stride=(1,1), kv_stride=(1,1), nheads=8, attn_dropout_prob=0.0, proj_dropout_prob=0.0, qkv_bias=false)
 
 A convolutional attention layer as proposed in CVT.
 
@@ -117,7 +118,6 @@ A convolutional attention layer as proposed in CVT.
 - `proj_dropout_prob`: Dropout probability in the projection block.
 - `q_stride`: Convolutional stride used to compute the query.
 - `kv_stride`: Convolutional stride used to compute the key and value.
-- `norm`: Type of normalization to use for convolutional projection (:BN or :LN).
 - `qkv_bias`: Whether to include a bias term in the convolutional projection layers.
 """
 mutable struct ConvAttention{Q,K,V,P,D}

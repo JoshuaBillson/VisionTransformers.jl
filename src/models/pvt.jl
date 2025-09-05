@@ -36,10 +36,7 @@ function PVT(embed_dims, depths, nheads, mlp_ratios, sr_ratios; qkv_bias=true, d
     @argcheck length(embed_dims) == length(depths) == length(nheads) == length(mlp_ratios) == length(sr_ratios)
 
     # Get Per-Block Path Drop Rate
-    drop_path_linspace = LinRange(0, drop_path, sum(depths))
-    drop_path_rates = map(zip(cumsum(vcat(0, depths)) .+ 1, cumsum(depths))) do i
-        return collect(drop_path_linspace[i[1]:i[2]])
-    end
+    drop_path_rates = _per_layer_drop_path(drop_path, depths)
 
     # Construct Stages
     stages = Any[]
@@ -48,9 +45,9 @@ function PVT(embed_dims, depths, nheads, mlp_ratios, sr_ratios; qkv_bias=true, d
             stages, 
             PVTStage(
                 (i == 1) ? inchannels : embed_dims[i-1],
-                embed_dims[i];
+                embed_dims[i], 
+                depths[i];
                 nheads=nheads[i], 
-                depth=depths[i], 
                 mlp_ratio=mlp_ratios[i],
                 sr_ratio=sr_ratios[i], 
                 patchsize=(i == 1) ? 4 : 2,
@@ -78,7 +75,7 @@ function PVT(embed_dims, depths, nheads, mlp_ratios, sr_ratios; qkv_bias=true, d
     )
 end
 
-function PVTStage(inplanes, outplanes; nheads=8, imsize=224, patchsize=4, depth=4, mlp_ratio=4, qkv_bias=false, dropout=0., drop_path=0., sr_ratio=1)
+function PVTStage(inplanes, outplanes, depth; nheads=8, imsize=224, patchsize=4, mlp_ratio=4, qkv_bias=false, dropout=0., drop_path=0., sr_ratio=1)
     drop_path = drop_path isa Number ? repeat([drop_path], depth) : drop_path
     Flux.Chain(
         Flux.Conv((patchsize,patchsize), inplanes=>outplanes; stride=patchsize), 

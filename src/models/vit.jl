@@ -10,7 +10,7 @@ end
 
 function ViT(dim::Integer, nheads::Integer, depth::Integer; imsize=(224,224), patchsize=(16,16), inchannels=3, nclasses=1000, mlp_ratio=4, qkv_bias=true, dropout=0.1, drop_path=0.0)
     # Get Per-Block Path Drop Rate
-    drop_path_rates = LinRange(0, drop_path, depth) |> collect
+    drop_path_rates = _per_layer_drop_path(drop_path, depth)
 
     # Construct ViT
     Flux.Chain(

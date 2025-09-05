@@ -5,6 +5,7 @@ import Flux
 using Match, ArgCheck, Statistics
 using Pipe: @pipe
 
+
 include("layers/utils.jl")
 export img2seq, seq2img
 
@@ -14,6 +15,7 @@ export MLP
 include("layers/attention.jl")
 export MultiHeadAttention, ConvAttention
 
+include("models/utils.jl")
 include("models/vit.jl")
 include("models/cvt.jl")
 include("models/pvt.jl")
