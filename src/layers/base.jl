@@ -25,15 +25,29 @@ end
 
 Flux.@layer :expand PositionEmbedding
 
-PositionEmbedding(dim::Int, seqlength::Int) = PositionEmbedding(rand(Float32, (dim, seqlength, 1)))
-function PositionEmbedding(dim::Int, imsize::Tuple, patchsize::Tuple)
+PositionEmbedding(dim::Int, seqlength::Int; init=zeros32) = PositionEmbedding(init((dim, seqlength, 1)))
+function PositionEmbedding(dim::Int, imsize::Tuple, patchsize::Tuple; class_token=false, init=zeros32)
     @argcheck length(imsize) == length(patchsize)
-    return PositionEmbedding(dim, prod(imsize .÷ patchsize))
+    seqlength = prod(imsize .÷ patchsize) + (class_token ? 1 : 0)
+    return PositionEmbedding(dim, seqlength; init)
 end
 
 (m::PositionEmbedding)(x::AbstractArray{<:Real,3}) = x .+ m.embedding
 function (m::PositionEmbedding)(x::AbstractArray{<:Real,N}) where N
     return x .+ reshape(m.embedding, (:,size(x)[2:N-1]...,1))
+end
+
+struct Tokens{T}
+    tokens::T
+end
+
+Flux.@layer :expand Tokens
+
+Tokens(dim::Int, ntokens::Int; init=rand32) = Tokens(init((dim, ntokens, 1)))
+
+function (m::Tokens)(x::AbstractArray{T,3}) where {T}
+    tokens = m.tokens .* Flux.ones_like(x, T, (1, 1, size(x, 3)))
+    return hcat(tokens, x)
 end
 
 struct PatchMerging{D,N}

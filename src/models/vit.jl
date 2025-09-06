@@ -8,7 +8,7 @@ function ViT(config::Symbol; kw...)
     end
 end
 
-function ViT(dim::Integer, nheads::Integer, depth::Integer; imsize=(224,224), patchsize=(16,16), inchannels=3, nclasses=1000, mlp_ratio=4, qkv_bias=true, dropout=0.1, drop_path=0.0)
+function ViT(dim::Integer, nheads::Integer, depth::Integer; imsize=(224,224), patchsize=(16,16), inchannels=3, nclasses=1000, mlp_ratio=4, qkv_bias=true, dropout=0.1, drop_path=0.0, class_token=false)
     # Get Per-Block Path Drop Rate
     drop_path_rates = _per_layer_drop_path(drop_path, depth)
 
@@ -19,13 +19,12 @@ function ViT(dim::Integer, nheads::Integer, depth::Integer; imsize=(224,224), pa
         Flux.Chain(
 
             # Patch Embedding
-            Flux.Conv(patchsize, inchannels=>dim, stride=patchsize), 
-
-            # Position Embedding
             Flux.Chain(
+                Flux.Conv(patchsize, inchannels=>dim, stride=patchsize), 
                 img2seq,
                 Flux.LayerNorm(dim),
-                PositionEmbedding(dim, imsize, patchsize),
+                class_token ? Tokens(dim, 1; init=zeros32) : identity,
+                PositionEmbedding(dim, imsize, patchsize; class_token, init=randn32),
                 Flux.Dropout(dropout),
             ),
 
@@ -35,7 +34,7 @@ function ViT(dim::Integer, nheads::Integer, depth::Integer; imsize=(224,224), pa
 
         # Classification Head
         Flux.Chain(
-            seconddimmean, 
+            class_token ? (x -> x[:, 1, :]) : seconddimmean,
             Flux.LayerNorm(dim), 
             Flux.Dense(dim, nclasses)
         ),

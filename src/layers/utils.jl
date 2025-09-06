@@ -33,32 +33,10 @@ function imsize(x::AbstractArray{<:Any,3})
     return (S,S)
 end
 
-set_imsize(l, imsize) = l
-set_imsize(l::Flux.Chain, imsize) = Flux.Chain([set_imsize(layer, imsize) for layer in l.layers]...)
-
-function windowed_dot_product_attention(
-    q::AbstractArray{<:Real,N}, k::AbstractArray{<:Real,N}, v::AbstractArray{<:Real,N};
-    bias=nothing, fdrop=identity, mask=nothing, nheads=1) where N
-end
-
-function dot_product_attention(
-    q::AbstractArray{<:Real,N}, k::AbstractArray{<:Real,N}, v::AbstractArray{<:Real,N}; kw...) where N
-
-    q_flat, k_flat, v_flat = map(_flatten_seq, (q, k, v))
-    x, α = dot_product_attention(q_flat, k_flat, v_flat; kw...)
-    return reshape(x, size(x, 1), size(q)[2:end]...), α
-end
-
-function dot_product_attention(
-    q::AbstractArray{<:Real,3}, k::AbstractArray{<:Real,3}, v::AbstractArray{<:Real,3};
-    bias=nothing, fdrop=identity, mask=nothing, nheads=1)
-    return Flux.NNlib.dot_product_attention(q, k, v, bias; fdrop, mask, nheads)
-end
-
-_seq_size(x::AbstractArray{<:Any,N}) where N = size(x)[2:N-1]
-
-_seq_length(x::AbstractArray) = _seq_size(x) |> prod
-
-_flatten_seq(x::AbstractArray{<:Any,N}) where N = reshape(x, size(x,1), :, size(x,N))
-
 seconddimmean(x) = dropdims(mean(x; dims=2); dims=2)
+
+rand32(x::Tuple) = Flux.rand32(x...)
+
+zeros32(x::Tuple) = Flux.zeros32(x...)
+
+randn32(x::Tuple) = Flux.randn32(x...)
