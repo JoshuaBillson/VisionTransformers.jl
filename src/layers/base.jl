@@ -37,6 +37,73 @@ function (m::PositionEmbedding)(x::AbstractArray{<:Real,N}) where N
     return x .+ reshape(m.embedding, (:,size(x)[2:N-1]...,1))
 end
 
+struct RelativePositionEmbedding{B,I}
+    relative_position_bias::B
+    relative_position_index::I
+end
+
+Flux.@layer :expand RelativePositionEmbedding trainable=(relative_position_bias,)
+
+function RelativePositionEmbedding(dim::Int, nheads::Int, window_size::Tuple; init=zeros32)
+    @argcheck all(window_size .> 0)
+    @argcheck dim > 0
+    @argcheck nheads > 0
+    num_positions = prod((2 .* window_size) .- 1)
+    relative_position_bias = init((nheads, num_positions))
+    relative_position_index = _relative_position_index(window_size)
+    return RelativePositionEmbedding(relative_position_bias, relative_position_index)
+end
+
+function (m::RelativePositionEmbedding)(x)
+    #relative_position_index = reshape(m.relative_position_index, :)
+    #relative_position_bias = m.relative_position_bias[:,relative_position_index]
+    #relative_position_bias = reshape(relative_position_bias, (:, size(x)[1:2]..., 1)) # [nH x Ww*Wh x Ww*Wh x 1]
+    relative_position_bias = Flux.unsqueeze(m.relative_position_bias[:,m.relative_position_index]; dims=4)
+    relative_position_bias = permutedims(relative_position_bias, (2,3,1,4)) # [Ww*Wh x Ww*Wh x nH x 1]
+    return relative_position_bias .+ x
+end
+
+Flux.NNlib.apply_attn_bias(logits, bias::RelativePositionEmbedding) = bias(logits)
+
+function _relative_position_index(window_size::NTuple{2,Int})
+    # Generate coordinates
+    Wy, Wx = window_size  # Window is (W x H) = (cols x rows) = (Y x X) in matrix coordinates
+    coords = hcat(map(collect, Iterators.product(1:Wx, 1:Wy))...)  # Shape: 2, Wx*Wy
+
+    # Compute relative coordinates
+    relative_coords = Flux.unsqueeze(coords, 3) .- Flux.unsqueeze(coords, 2)  # Shape: 2, Wx*Wy, Wx*Wy
+
+    # Shift to start from 0
+    relative_coords[1, :, :] .+= Wx - 1
+    relative_coords[2, :, :] .+= Wy - 1
+
+    # Calculate relative position index
+    relative_coords[2, :, :] .*= 2 * Wx - 1
+    relative_position_index = dropdims(sum(relative_coords, dims=1), dims=1)
+    return relative_position_index .+ 1  # adjust for 1-based indexing
+end
+
+function _relative_position_index(window_size::NTuple{3,Int})
+    # Generate coordinates: shape (3, Wx*Wy*Wz)
+    Wy, Wx, Wz = window_size # Window is (W x H x D) = (cols x rows x pages) = (Y x X x Z) in matrix coordinates
+    coords = hcat(map(collect, Iterators.product(1:Wx, 1:Wy, 1:Wz))...)
+
+    # Compute relative coordinates: shape (3, num_positions, num_positions)
+    relative_coords = Flux.unsqueeze(coords, 3) .- Flux.unsqueeze(coords, 2)
+
+    # Shift to start from 0
+    relative_coords[1, :, :] .+= Wx - 1
+    relative_coords[2, :, :] .+= Wy - 1
+    relative_coords[3, :, :] .+= Wz - 1
+
+    # Calculate relative position index
+    relative_coords[2, :, :] .*= (2*Wx - 1)
+    relative_coords[3, :, :] .*= (2*Wx - 1) * (2*Wy - 1)
+    relative_position_index = dropdims(sum(relative_coords, dims=1), dims=1)
+    return relative_position_index .+ 1  # adjust for 1-based indexing
+end
+
+
 struct Tokens{T}
     tokens::T
 end

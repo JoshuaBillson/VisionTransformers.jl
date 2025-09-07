@@ -256,7 +256,7 @@ end
 
 Flux.@layer :expand WindowedAttention
 
-function WindowedAttention(dim::Integer; window_size=(7,7), nheads=8, qkv_bias=false, attn_dropout_prob=0.0, proj_dropout_prob=0.0)
+function WindowedAttention(dim::Integer; window_size=(7,7), position_embedding=false, nheads=8, qkv_bias=false, attn_dropout_prob=0.0, proj_dropout_prob=0.0)
     @assert dim % nheads==0 "planes should be divisible by nheads"
 
     # Initialize Layers
@@ -265,16 +265,13 @@ function WindowedAttention(dim::Integer; window_size=(7,7), nheads=8, qkv_bias=f
     proj = Flux.Chain(Flux.Dense(dim, dim), Flux.Dropout(proj_dropout_prob))
 
     # Initialize Positional Embedding
-    #relative_position_bias = zeros(Float32, prod((2 .* window_size) .- 1), nheads)
-
-    # Compute Relative Position Indices
-    #relative_position_index = _relative_position_index(window_size)
+    relative_position_embedding = position_embedding ? RelativePositionEmbedding(dim, nheads, window_size) : nothing
 
     # Construct Layer
     return WindowedAttention(
         nheads,
         window_size,
-        nothing,
+        relative_position_embedding,
         qkv_layer, 
         attn_drop, 
         proj
@@ -286,7 +283,7 @@ function (m::WindowedAttention{D})(x::AbstractArray{<:Number,N}) where {D,N}
     windows = window_partition(x, m.window_size)
 
     # Get Position Bias
-    relative_position_bias = nothing
+    relative_position_bias = m.position_embedding
 
     # Compute Attention
     qkv = m.qkv_layer(windows)
@@ -296,50 +293,6 @@ function (m::WindowedAttention{D})(x::AbstractArray{<:Number,N}) where {D,N}
 
     # Reverse Windows
     return window_reverse(y, m.window_size)
-end
-
-_relative_position_bias(::Nothing, ::Any) = nothing
-function _relative_position_bias(relative_position_bias::AbstractMatrix{<:Real}, relative_position_index::AbstractArray{<:Real})
-    relative_position_bias = relative_position_bias[relative_position_index,:] # [wL x wL x nH]
-    return Flux.unsqueeze(relative_position_bias, dims=4) # [wL x wL x nH x 1]
-end
-
-function _relative_position_index(window_size::NTuple{2,Int})
-    # Generate coordinates
-    Wy, Wx = window_size  # Window is (W x H) = (cols x rows) = (Y x X) in matrix coordinates
-    coords = hcat(map(collect, Iterators.product(1:Wx, 1:Wy))...)  # Shape: 2, Wx*Wy
-
-    # Compute relative coordinates
-    relative_coords = Flux.unsqueeze(coords, 3) .- Flux.unsqueeze(coords, 2)  # Shape: 2, Wx*Wy, Wx*Wy
-
-    # Shift to start from 0
-    relative_coords[1, :, :] .+= Wx - 1
-    relative_coords[2, :, :] .+= Wy - 1
-
-    # Calculate relative position index
-    relative_coords[2, :, :] .*= 2 * Wx - 1
-    relative_position_index = dropdims(sum(relative_coords, dims=1), dims=1)
-    return relative_position_index .+ 1  # adjust for 1-based indexing
-end
-
-function _relative_position_index(window_size::NTuple{3,Int})
-    # Generate coordinates: shape (3, Wx*Wy*Wz)
-    Wy, Wx, Wz = window_size # Window is (W x H x D) = (cols x rows x pages) = (Y x X x Z) in matrix coordinates
-    coords = hcat(map(collect, Iterators.product(1:Wx, 1:Wy, 1:Wz))...)
-
-    # Compute relative coordinates: shape (3, num_positions, num_positions)
-    relative_coords = Flux.unsqueeze(coords, 3) .- Flux.unsqueeze(coords, 2)
-
-    # Shift to start from 0
-    relative_coords[1, :, :] .+= Wx - 1
-    relative_coords[2, :, :] .+= Wy - 1
-    relative_coords[3, :, :] .+= Wz - 1
-
-    # Calculate relative position index
-    relative_coords[2, :, :] .*= (2*Wx - 1)
-    relative_coords[3, :, :] .*= (2*Wx - 1) * (2*Wy - 1)
-    relative_position_index = dropdims(sum(relative_coords, dims=1), dims=1)
-    return relative_position_index .+ 1  # adjust for 1-based indexing
 end
 
 _window_attention_mask(::Any, ::NTuple, ::Nothing, ::Int) = nothing

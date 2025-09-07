@@ -23,25 +23,8 @@ function SWIN(config::Symbol; kw...)
     end
 end
 
-function SWIN(embed_dims, depths, nheads; window_size=7, mlp_ratio=4, qkv_bias=true, dropout=0.1, drop_path=0.0, inchannels=3, nclasses=1000)
+function SWIN(embed_dims, depths, nheads; window_size=7, position_embedding=true, mlp_ratio=4, qkv_bias=true, dropout=0.1, drop_path=0.0, inchannels=3, nclasses=1000)
     @argcheck length(embed_dims) == length(depths) == length(nheads)
-    stages = Any[]
-    for i in eachindex(embed_dims)
-        push!(
-            stages, 
-            SWINStage(
-                embed_dims[i]; 
-                depth=depths[i], 
-                nheads=nheads[i], 
-                merge_patches=(i>1),
-                window_size,
-                mlp_ratio, 
-                qkv_bias, 
-                dropout, 
-                drop_path
-            )
-        )
-    end
     return Flux.Chain(
         # Patch Embedding
         Flux.Conv((4,4), inchannels=>embed_dims[1], stride=(4,4)),
@@ -50,7 +33,20 @@ function SWIN(embed_dims, depths, nheads; window_size=7, mlp_ratio=4, qkv_bias=t
         Flux.Dropout(dropout),
 
         # Encoder
-        Flux.Chain(stages...), 
+        Flux.Chain(
+            [SWINStage(
+                embed_dims[i]; 
+                depth=depths[i], 
+                nheads=nheads[i], 
+                merge_patches=(i>1),
+                window_size,
+                position_embedding,
+                mlp_ratio, 
+                qkv_bias, 
+                dropout, 
+                drop_path
+            ) for i in eachindex(embed_dims)]...
+        ),
 
         # Classification Head
         Flux.Chain(
@@ -61,19 +57,20 @@ function SWIN(embed_dims, depths, nheads; window_size=7, mlp_ratio=4, qkv_bias=t
     )
 end
 
-function SWINStage(dims; nheads=8, window_size=7, depth=4, mlp_ratio=4, qkv_bias=false, dropout=0., drop_path=0., merge_patches=true)
+function SWINStage(dims; nheads=8, window_size=7, position_embedding=true, depth=4, mlp_ratio=4, qkv_bias=false, dropout=0., drop_path=0., merge_patches=true)
     Flux.Chain(
         merge_patches ? PatchMerging(dims÷2) : identity,
-        [SWINBlock(dims; window_size, nheads, mlp_ratio, qkv_bias, window_shift=((i%2)==0), dropout, drop_path) for i in 1:depth]..., 
+        [SWINBlock(dims; window_size, position_embedding, nheads, mlp_ratio, qkv_bias, window_shift=((i%2)==0), dropout, drop_path) for i in 1:depth]..., 
     )
 end
 
-function SWINBlock(dim::Int; window_size=7, nheads=8, mlp_ratio=4, qkv_bias=false, window_shift=false, dropout=0.0, drop_path=0.0)
+function SWINBlock(dim::Int; window_size=7, position_embedding=true, nheads=8, mlp_ratio=4, qkv_bias=false, window_shift=false, dropout=0.0, drop_path=0.0)
+    window_size = (window_size,window_size)
     Flux.Chain(
         Flux.SkipConnection(
             Flux.Chain(
                 Flux.LayerNorm(dim),
-                WindowedAttention(dim; nheads, window_size=(window_size,window_size), qkv_bias, attn_dropout_prob=dropout, proj_dropout_prob=dropout),
+                WindowedAttention(dim; nheads, window_size, position_embedding, qkv_bias, attn_dropout_prob=dropout, proj_dropout_prob=dropout),
                 Flux.Dropout(drop_path, dims=4)  # Drop Path
             ), 
             +
