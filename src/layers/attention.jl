@@ -291,7 +291,7 @@ function (m::WindowedAttention{D})(x::AbstractArray{<:Number,N}) where {D,N}
     relative_position_bias = m.position_embedding
 
     # Get Attention Mask
-    attention_mask = _window_attention_mask(x, m.window_size, m.shift_size)
+    attention_mask = _window_attention_mask(x, m.window_size, m.shift_size, m.nheads)
 
     # Compute Attention
     qkv = m.qkv_layer(windows)
@@ -310,8 +310,9 @@ _forward_shift_windows(x::AbstractArray{<:Real}, window_shift::Tuple) = circshif
 
 _reverse_shift_windows(x::AbstractArray{<:Real}, window_shift::Tuple) = circshift(x, (0,window_shift...,0))
 
-function _window_attention_mask(x, window_size::NTuple{2,Int}, window_shift::NTuple{2,Int})
+function _window_attention_mask(x, window_size::NTuple{2,Int}, window_shift::NTuple{2,Int}, nheads)
     # Create Attention Mask From Window Regions
+    N = size(x,4)
     wL = prod(window_size)
     nW, nH = size(x)[2:3] .÷ window_size
     region_mask = _region_mask(x, window_shift)
@@ -321,9 +322,10 @@ function _window_attention_mask(x, window_size::NTuple{2,Int}, window_shift::NTu
 
     # Extend Mask to Match nheads and batchsize
     #attn_mask = Flux.unsqueeze(attn_mask, dims=3)
-    attn_mask = reshape(attn_mask, (wL,wL,1,nW,nH,1))
-    #return attn_mask
-    return reshape(repeat(attn_mask, 1, 1, 1, 1, 1, size(x,4)), (wL,wL,1,:))
+    #attn_mask = reshape(attn_mask, (wL,wL,1,nW,nH,1))
+    #return reshape(repeat(attn_mask, 1, 1, 1, 1, 1, size(x,4)), (wL,wL,1,:))
+    attn_mask = Flux.zeros_like(x, Bool, (wL,wL,nheads,nW,nH,N)) .| reshape(attn_mask, (wL,wL,1,nW,nH,1))
+    return reshape(attn_mask, (wL,wL,nheads,:))
 end
 
 function _region_mask(x::AbstractArray{<:Real,4}, window_shift::NTuple{2,Int})
