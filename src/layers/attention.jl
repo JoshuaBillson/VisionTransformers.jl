@@ -291,7 +291,8 @@ function (m::WindowedAttention{D})(x::AbstractArray{<:Number,N}) where {D,N}
     relative_position_bias = m.position_embedding
 
     # Get Attention Mask
-    attention_mask = _window_attention_mask(x, m.window_size, m.shift_size, m.nheads)
+    #attention_mask = _window_attention_mask(x, m.window_size, m.shift_size, m.nheads)
+    attention_mask = nothing
 
     # Compute Attention
     qkv = m.qkv_layer(windows)
@@ -334,6 +335,39 @@ function _region_mask(x::AbstractArray{<:Real,4}, window_shift::NTuple{2,Int})
     mask1 = Flux.pad_constant(Flux.zeros_like(x, (W-sW,H)), (0,sW), 1, dims=1)
     mask2 = Flux.pad_constant(Flux.zeros_like(x, (W,H-sH)), (0,sH), 2, dims=2)
     return reshape(mask1 .+ mask2, (1,W,H,1))
+end
+
+function compute_attention_mask(x, window_size::Int, feature_size::Tuple{Int,Int}, nheads)
+    N = size(x,4)
+    W, H = feature_size
+    shift_size = window_size ÷ 2
+    img_mask = zeros(UInt8, 1, W, H, 1)
+    w_slices = [1:(W-window_size), (W-window_size+1):(W-shift_size), (W-shift_size+1):W]
+    h_slices = [1:(H-window_size), (H-window_size+1):(H-shift_size), (H-shift_size+1):H]
+    cnt = 0
+    for w in w_slices
+        for h in h_slices
+            img_mask[:, w, h, :] .= cnt
+            cnt += 1
+        end
+    end
+
+    mask_windows = window_partition2(img_mask, window_size)  # 1, window_size, window_size, nW
+    mask_windows = reshape(mask_windows, (window_size^2, :))  # window_size * window_size, nW
+    attn_mask = Flux.unsqueeze(mask_windows, dims=2) .- Flux.unsqueeze(mask_windows, dims=1)
+    attention_mask = attn_mask .== 0
+
+    nW = size(attention_mask, 3)  # number of windows
+    wL = window_size ^ 2  # length of flattened window 
+    attn_mask = Flux.zeros_like(attention_mask, Bool, (wL,wL,nheads,nW,N)) .| reshape(attention_mask, (wL,wL,1,nW,1))
+    return reshape(attn_mask, (wL,wL,nheads,:))
+end
+
+function window_partition2(x::AbstractArray{<:Number,4}, window_size)
+    C, W, H, B = size(x)
+    @pipe reshape(x, (C, window_size, W ÷ window_size, window_size, H ÷ window_size, B)) |> 
+    permutedims(_, (1,2,4,3,5,6)) |> 
+    reshape(_, (C, window_size, window_size, :))
 end
 
 function window_partition(x::AbstractArray{<:Any,4}, window_size::NTuple{2,Int})
