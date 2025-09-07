@@ -66,8 +66,8 @@ end
 
 function SWINBlock(dim::Int; window_size=7, position_embedding=true, nheads=8, mlp_ratio=4, qkv_bias=false, window_shift=false, dropout=0.0, drop_path=0.0)
     window_size = (window_size,window_size)
-    #shift_size = window_shift ? (window_size .÷ 2) : (0,0)
-    shift_size = (0,0)
+    shift_size = window_shift ? (window_size .÷ 2) : (0,0)
+    #shift_size = (0,0)
     Flux.Chain(
         Flux.SkipConnection(
             Flux.Chain(
