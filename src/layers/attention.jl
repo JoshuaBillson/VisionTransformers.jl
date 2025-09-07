@@ -248,6 +248,7 @@ end
 struct WindowedAttention{D,E,W<:NTuple{D},QKV,AD,P}
     nheads::Int
     window_size::W
+    shift_size::W
     position_embedding::E
     qkv_layer::QKV
     attn_drop::AD
@@ -256,7 +257,7 @@ end
 
 Flux.@layer :expand WindowedAttention
 
-function WindowedAttention(dim::Integer; window_size=(7,7), position_embedding=false, nheads=8, qkv_bias=false, attn_dropout_prob=0.0, proj_dropout_prob=0.0)
+function WindowedAttention(dim::Integer; window_size=(7,7), shift_size=(0,0), position_embedding=false, nheads=8, qkv_bias=false, attn_dropout_prob=0.0, proj_dropout_prob=0.0)
     @assert dim % nheads==0 "planes should be divisible by nheads"
 
     # Initialize Layers
@@ -271,6 +272,7 @@ function WindowedAttention(dim::Integer; window_size=(7,7), position_embedding=f
     return WindowedAttention(
         nheads,
         window_size,
+        shift_size,
         relative_position_embedding,
         qkv_layer, 
         attn_drop, 
@@ -279,61 +281,57 @@ function WindowedAttention(dim::Integer; window_size=(7,7), position_embedding=f
 end
 
 function (m::WindowedAttention{D})(x::AbstractArray{<:Number,N}) where {D,N}
+    # Forward Shift
+    x = _forward_shift_windows(x, m.shift_size)
+
     # Partition Into Windows (CxW*WxN)
     windows = window_partition(x, m.window_size)
 
     # Get Position Bias
     relative_position_bias = m.position_embedding
 
+    # Get Attention Mask
+    attention_mask = _window_attention_mask(x, m.window_size, m.shift_size)
+
     # Compute Attention
     qkv = m.qkv_layer(windows)
     q, k, v = Flux.chunk(qkv, 3, dims=1)
-    y, α = Flux.NNlib.dot_product_attention(q, k, v, relative_position_bias; nheads=m.nheads, fdrop=m.attn_drop, mask=nothing)
+    y, α = Flux.NNlib.dot_product_attention(q, k, v, relative_position_bias; nheads=m.nheads, fdrop=m.attn_drop, mask=attention_mask)
     y = m.projection(y)
 
     # Reverse Windows
-    return window_reverse(y, m.window_size)
+    y = window_reverse(y, m.window_size)
+
+    # Undo Shift
+    return _reverse_shift_windows(y, m.shift_size)
 end
 
-_window_attention_mask(::Any, ::NTuple, ::Nothing, ::Int) = nothing
-function _window_attention_mask(x, window_size::NTuple{2,Int}, window_shift::NTuple{2,Int}, nheads::Int)
+_forward_shift_windows(x::AbstractArray{<:Real}, window_shift::Tuple) = circshift(x, (0,(-1 .* window_shift)...,0))
+
+_reverse_shift_windows(x::AbstractArray{<:Real}, window_shift::Tuple) = circshift(x, (0,window_shift...,0))
+
+function _window_attention_mask(x, window_size::NTuple{2,Int}, window_shift::NTuple{2,Int})
     # Create Attention Mask From Window Regions
     wL = prod(window_size)
+    nW, nH = size(x)[2:3] .÷ window_size
     region_mask = _region_mask(x, window_shift)
-    mask_windows = window_partition(region_mask, window_size)  # [1 x wL x nW]
-    mask_windows = reshape(mask_windows, (wL, :))  # [WL x nW]
-    attn_mask = Flux.unsqueeze(mask_windows, dims=2) .== Flux.unsqueeze(mask_windows, dims=1) # [wL x wL x nW]
+    mask_windows = window_partition(region_mask, window_size)  # [1 x wL x nW x nH x 1]
+    mask_windows = dropdims(mask_windows, dims=1)  # [wL x nW x nH x 1]
+    attn_mask = Flux.unsqueeze(mask_windows, dims=2) .== Flux.unsqueeze(mask_windows, dims=1) # [wL x wL x nW x nH x 1]
 
     # Extend Mask to Match nheads and batchsize
-    attn_mask = reshape(attn_mask, (wL,wL,1,:))
-    return repeat(attn_mask, 1, 1, nheads, size(x,4))
+    #attn_mask = Flux.unsqueeze(attn_mask, dims=3)
+    attn_mask = reshape(attn_mask, (wL,wL,1,nW,nH,1))
+    #return attn_mask
+    return reshape(repeat(attn_mask, 1, 1, 1, 1, 1, size(x,4)), (wL,wL,1,:))
 end
 
-function _region_mask(x, window_shift::NTuple{2,Int})
+function _region_mask(x::AbstractArray{<:Real,4}, window_shift::NTuple{2,Int})
     W, H = size(x)[2:3]
     sW, sH = window_shift
     mask1 = Flux.pad_constant(Flux.zeros_like(x, (W-sW,H)), (0,sW), 1, dims=1)
     mask2 = Flux.pad_constant(Flux.zeros_like(x, (W,H-sH)), (0,sH), 2, dims=2)
     return reshape(mask1 .+ mask2, (1,W,H,1))
-end
-
-function _region_mask_buffer(x, window_size::NTuple{2,Int}, window_shift::NTuple{2,Int})
-    W, H = size(x)[2:3]
-    wW, wH = window_size
-    sW, sH = window_shift
-    attn_mask = Flux.Zygote.Buffer(x, 1, W, H, 1)
-    cnt = 0
-    for wslice in [1:(W-wW), (W-wW+1):(W-sW), (W-sW+1):W]
-        for hslice in [1:(H-wH), (H-wH+1):(H-sH), (H-sH+1):H]
-            for w in wslice
-                for h in hslice
-                    attn_mask[1, w, h, 1] = cnt
-                end
-            end
-            cnt += 1
-        end
-    end
-    return copy(attn_mask)
 end
 
 function window_partition(x::AbstractArray{<:Any,4}, window_size::NTuple{2,Int})
