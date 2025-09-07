@@ -293,12 +293,12 @@ function (m::WindowedAttention{D})(x::AbstractArray{<:Number,N}) where {D,N}
     # Get Attention Mask
     #attention_mask = nothing
     wL = prod(m.window_size)
-    attention_mask1 = Flux.ones_like(x, Bool, (wL,wL,1,size(x,4)))
-    @info typeof(attention_mask1) size(attention_mask1)
+    #attention_mask1 = Flux.ones_like(x, Bool, (wL,wL,1,size(x,4)))
+    #@info typeof(attention_mask1) size(attention_mask1)
     attention_mask2 = _window_attention_mask(x, m.window_size, m.shift_size, m.nheads)
-    @info typeof(attention_mask2) size(attention_mask2)
-    @info all(attention_mask1 .== attention_mask2)
-    attention_mask = attention_mask1
+    #@info typeof(attention_mask2) size(attention_mask2)
+    #@info all(attention_mask1 .== attention_mask2)
+    attention_mask = attention_mask2
 
     # Compute Attention
     qkv = m.qkv_layer(windows)
