@@ -1,3 +1,29 @@
+"""
+    PVT(config::Symbol; kw...)
+    PVT(embed_dims, depths, nheads, mlp_ratios, sr_ratios;
+        qkv_bias=true, dropout=0.1, drop_path=0.0,
+        imsize=224, inchannels=3, nclasses=1000)
+
+Construct a Pyramid Vision Transformer (PVT) model for image classification
+or feature extraction. PVT builds a hierarchical representation by
+progressively reducing spatial resolution while increasing the embedding
+dimension. Spatial Reduction Attention (SRA) is used to make attention
+efficient on high-resolution feature maps.
+
+# Arguments
+- `config`: One of `:tiny`, `:small`, `:medium`, or `:large`.
+- `embed_dims`: Embedding dimension for each stage of the network.
+- `depths`: Number of transformer blocks in each stage.
+- `nheads`: Number of attention heads in each stage.
+- `mlp_ratios`: Expansion ratio for the hidden dimension of the MLP in each stage.
+- `sr_ratios`: Spatial reduction ratio for SRA in each stage.
+- `qkv_bias`: Whether to add a bias to query, key, and value projections. Default is `true`.
+- `dropout`: Dropout probability applied to MLP and attention outputs.
+- `drop_path`: Probability for stochastic depth (drop-path) regularization.
+- `imsize`: Input image size (assumed square). Default is `224`.
+- `inchannels`: Number of input image channels. Default is `3`.
+- `nclasses`: Number of output classes for classification. Default is `1000`.
+"""
 function PVT(config::Symbol; kw...)
     @match config begin
         :tiny => PVT(

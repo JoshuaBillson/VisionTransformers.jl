@@ -20,6 +20,6 @@ include("models/vit.jl")
 include("models/cvt.jl")
 include("models/pvt.jl")
 include("models/swin.jl")
-export ViT, ViTBlock, CVT, CVTBlock, PVT, PVTBlock, SWIN, SWINBlock
+export ViT, ViTBlock, CvT, CvTBlock, PVT, PVTBlock, SWIN, SWINBlock
 
 end

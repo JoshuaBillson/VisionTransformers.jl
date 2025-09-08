@@ -9,6 +9,26 @@ Documentation for [VisionTransformers](https://github.com/JoshuaBillson/VisionTr
 ```@index
 ```
 
-```@autodocs
-Modules = [VisionTransformers]
+# Models
+
+```@docs
+ViT
+CvT
+PVT
+SWIN
+```
+
+# Layers
+```@docs
+MultiHeadAttention
+ConvAttention
+SRAttention
+WindowedAttention
+MLP
+```
+
+# Utilities
+```@docs
+img2seq
+seq2img
 ```

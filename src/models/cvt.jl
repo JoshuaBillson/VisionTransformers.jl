@@ -1,12 +1,37 @@
-function CVT(config::Symbol; kw...)
+"""
+    CvT(config::Symbol; kw...)
+    CvT(dim::Int, depths, nheads;
+        inchannels=3, mlp_ratio=4,
+        dropout=0.1, drop_path=0.0,
+        nclasses=1000)
+
+Construct a Convolutional Vision Transformer (CvT) model for image
+classification. CvT extends the Vision Transformer (ViT) by replacing
+linear projections with convolutional projections and by introducing
+convolutional token embeddings. This design enhances locality and
+translation invariance while retaining the benefits of Transformer-based
+global modeling.
+
+# Arguments
+- `config`: One of `:B13`, `:B21`, or `:W24`.
+- `dim`: Embedding dimension of patch tokens in the first stage.
+- `depths`: Number of Transformer blocks in each stage.
+- `nheads`: Number of attention heads in each stage.
+- `inchannels`: Number of input image channels. Default is `3`.
+- `mlp_ratio:`: Expansion ratio for the hidden dimension of the MLP relative to `dim`. Default is `4`.
+- `dropout`: Dropout probability applied to embeddings, MLP, and attention outputs.
+- `drop_path`: Probability for stochastic depth (drop-path) regularization.
+- `nclasses`: Number of output classes for classification. Default is `1000`.
+"""
+function CvT(config::Symbol; kw...)
     @match config begin
-        :B13 => CVT(64, [1,2,10], [1,3,6]; kw...)
-        :B21 => CVT(64, [1,4,16], [1,3,6], kw...)
-        :W24 => CVT(64, [2,2,20], [3,12,16], kw...)
+        :B13 => CvT(64, [1,2,10], [1,3,6]; kw...)
+        :B21 => CvT(64, [1,4,16], [1,3,6], kw...)
+        :W24 => CvT(64, [2,2,20], [3,12,16], kw...)
     end
 end
 
-function CVT(dim::Int, depths, nheads; inchannels=3, mlp_ratio=4, dropout=0.1, drop_path=0.0, nclasses=1000)
+function CvT(dim::Int, depths, nheads; inchannels=3, mlp_ratio=4, dropout=0.1, drop_path=0.0, nclasses=1000)
     @argcheck length(depths) == length(nheads) == 3
 
     # Get Per-Block Path Drop Rate
@@ -17,7 +42,7 @@ function CVT(dim::Int, depths, nheads; inchannels=3, mlp_ratio=4, dropout=0.1, d
         Flux.Chain(
 
             # Stage 1
-            CVTStage(
+            CvTStage(
                 inchannels, 
                 dim*nheads[1], 
                 depths[1]; 
@@ -31,7 +56,7 @@ function CVT(dim::Int, depths, nheads; inchannels=3, mlp_ratio=4, dropout=0.1, d
             ),
 
             # Stage 2
-            CVTStage(
+            CvTStage(
                 dim*nheads[1], 
                 dim*nheads[2], 
                 depths[2]; 
@@ -43,7 +68,7 @@ function CVT(dim::Int, depths, nheads; inchannels=3, mlp_ratio=4, dropout=0.1, d
             ),
 
             # Stage 3
-            CVTStage(
+            CvTStage(
                 dim*nheads[2], 
                 dim*nheads[3], 
                 depths[3]; 
@@ -65,18 +90,18 @@ function CVT(dim::Int, depths, nheads; inchannels=3, mlp_ratio=4, dropout=0.1, d
     )
 end
 
-function CVTStage(inplanes, outplanes, depth; nheads=4, patchsize=3, patchstride=2, kernel_size=3, mlp_ratio=4, qkv_bias=false, q_stride=1, kv_stride=2, dropout=0., drop_path=0.)
+function CvTStage(inplanes, outplanes, depth; nheads=4, patchsize=3, patchstride=2, kernel_size=3, mlp_ratio=4, qkv_bias=false, q_stride=1, kv_stride=2, dropout=0., drop_path=0.)
     drop_path = drop_path isa Number ? repeat([drop_path], depth) : drop_path
     Flux.Chain(
         Flux.Conv((patchsize,patchsize), inplanes=>outplanes, stride=(patchstride,patchstride), pad=Flux.SamePad()),
         Base.Fix2(permutedims, (3,1,2,4)),
         Flux.LayerNorm(outplanes),
-        Flux.Chain([CVTBlock(outplanes; nheads, kernel_size, mlp_ratio, qkv_bias, q_stride, kv_stride, dropout, drop_path=drop_path[i]) for i in 1:depth]...),
+        Flux.Chain([CvTBlock(outplanes; nheads, kernel_size, mlp_ratio, qkv_bias, q_stride, kv_stride, dropout, drop_path=drop_path[i]) for i in 1:depth]...),
         Base.Fix2(permutedims, (2,3,1,4)),
     )
 end
 
-function CVTBlock(dim; nheads=4, kernel_size=3, mlp_ratio=4, qkv_bias=false, q_stride=1, kv_stride=1, dropout=0., drop_path=0.)
+function CvTBlock(dim; nheads=4, kernel_size=3, mlp_ratio=4, qkv_bias=false, q_stride=1, kv_stride=1, dropout=0., drop_path=0.)
     Flux.Chain(
         Flux.SkipConnection(
             Flux.Chain(

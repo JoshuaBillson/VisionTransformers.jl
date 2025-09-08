@@ -1,18 +1,21 @@
-struct LinearProjection{D<:Flux.Dense}
-    qkv::D
-end
-
-Flux.@layer :expand LinearProjection
-
-function LinearProjection(dim::Integer; qkv_bias=false)
-    return LinearProjection(Flux.Dense(dim=>dim*3; bias=qkv_bias))
-end
-
-(m::LinearProjection)(x::AbstractArray) = Flux.chunk(m.qkv(x), 3; dims=1)
-
 """
-    MultiHeadAttentionModule(qkv, proj; nheads=8, attn_dropout_prob=0.0, proj_dropout_prob=0.0)
+    MultiHeadAttention(dim::Integer;
+                       nheads=8,
+                       attn_dropout_prob=0.0,
+                       proj_dropout_prob=0.0,
+                       qkv_bias=false)
 
+Construct a multi-head self-attention layer. The input features are linearly projected
+into query, key, and value tensors. Expects tensors of size `C x S x N`, where `C` is the
+embedding dimension, `S` is the sequence length, and `N` is the batch size. Note that `S` can
+have more than one dimension.
+
+# Arguments
+- `dim`: Dimensionality of the input feature embeddings.
+- `nheads`: Number of parallel attention heads. Default is `8`.
+- `attn_dropout_prob`: Dropout probability applied to attention weights.
+- `proj_dropout_prob`: Dropout probability applied after the output projection.
+- `qkv_bias`: Whether to add learnable bias terms to the query, key, and value projections.
 """
 struct MultiHeadAttention{Q,P,D1,D2}
     nheads::Int
@@ -34,13 +37,12 @@ function MultiHeadAttention(dim::Integer; nheads=8, attn_dropout_prob=0.0, proj_
     )
 end
 
-function (m::MultiHeadAttention)(x::AbstractArray{<:Real,3})
+function (m::MultiHeadAttention)(x::AbstractArray{<:Real})
     q, k, v = Flux.chunk(m.qkv(x), 3; dims=1)
     y, α = Flux.dot_product_attention(q, k, v; m.nheads, fdrop=m.attn_drop)
     return m.proj(y) |> m.proj_drop
 end
 
-"""
 struct SeparableConv{D,N,C<:Flux.Conv{D},P}
     conv::C
     proj::P
@@ -49,66 +51,23 @@ end
 
 Flux.@layer :expand SeparableConv
 
-function SeparableConv(dim, kernel::NTuple{N,Int}, stride::NTuple{N,Int}; norm=:BN, bias=false) where N
-    @argcheck norm in (:LN, :BN)
+function SeparableConv(dim, kernel::NTuple{N,Int}, stride::NTuple{N,Int}; bias=false) where N
     return SeparableConv(
         Flux.DepthwiseConv(kernel, dim=>dim; pad=Flux.SamePad(), stride, bias=false), 
         Flux.Dense(dim=>dim; bias),
-        norm == :BN ? Flux.BatchNorm(dim) : Flux.LayerNorm(dim)
+        Flux.BatchNorm(dim)
     )
 end
 
-function (m::SeparableConv{D,<:Flux.BatchNorm})(x::AbstractArray{<:Real,N}) where {D,N}
-    C = size(x, D+1)
-    Obs = size(x, N)
-    @pipe m.conv(x) |> m.norm |> permutedims(_, (D+1, 1:D..., N)) |> m.proj |> reshape(_, (C,:,Obs))
-end
-
-function (m::SeparableConv{D,<:Flux.LayerNorm})(x::AbstractArray{<:Real,N}) where {D,N}
-    C = size(x, D+1)
-    Obs = size(x, N)
-    @pipe m.conv(x) |> permutedims(_, (D+1, 1:D..., N)) |> m.norm |> m.proj |> reshape(_, (C,:,Obs))
-end
-"""
-
-function SeparableConv(dim, kernel::NTuple{D,Int}, stride::NTuple{D,Int}; bias=false) where D
-    Flux.Chain(
-        Flux.DepthwiseConv(kernel, dim=>dim; pad=Flux.SamePad(), stride, bias=false), 
-        Flux.BatchNorm(dim),
-        Base.Fix2(permutedims, (D+1, 1:D..., D+2)),
-        Flux.Dense(dim=>dim; bias)
-    )
-end
-
-struct ConvProjection{Q,K,V}
-    q::Q
-    k::K
-    v::V
-end
-
-Flux.@layer :expand ConvProjection
-
-function ConvProjection(dim::Integer; kernel=(3,3), q_stride=(1,1), kv_stride=(1,1), qkv_bias=false)
-    return ConvProjection(
-        SeparableConv(dim, kernel, q_stride; bias=qkv_bias),
-        SeparableConv(dim, kernel, kv_stride; bias=qkv_bias),
-        SeparableConv(dim, kernel, kv_stride; bias=qkv_bias),
-    )
-end
-
-function (m::ConvProjection)(x::AbstractArray{T,N}) where {T,N}
-    D = N - 2  # Spatial Dimensions
-    C = size(x,1)  # Channel Dimension
-    O = size(x,N)  # Observation Dimension
-    x_permuted = permutedims(x, (2:D+1...,1,N))  # CWHN -> WHCN
-    return map(layer -> reshape(layer(x_permuted), (C,:,O)), (m.q,m.k,m.v))
+function (m::SeparableConv{D})(x::AbstractArray{<:Real,N}) where {D,N}
+    return @pipe m.conv(x) |> m.norm |> permutedims(_, (D+1, 1:D..., D+2)) |> m.proj
 end
 
 """
     ConvAttention(dim::Int; kernel=(3,3), q_stride=(1,1), kv_stride=(1,1), nheads=8, attn_dropout_prob=0.0, proj_dropout_prob=0.0, norm=:BN, qkv_bias=false)
     ConvAttention(dim::Int; kernel=(3,3), q_stride=(1,1), kv_stride=(1,1), nheads=8, attn_dropout_prob=0.0, proj_dropout_prob=0.0, qkv_bias=false)
 
-A convolutional attention layer as proposed in CVT.
+A convolutional attention layer as proposed in CvT.
 
 # Parameters
 - `dim`: The dimension of the feature embedding.
@@ -156,47 +115,29 @@ function (m::ConvAttention)(x::AbstractArray{<:Real,N}) where N
     return reshape(m.proj(y), size(x))
 end
 
-struct SRProjection{SR,Q,KV}
-    sr::SR
-    q::Q
-    kv::KV
-end
+"""
+    SRAttention(dim::Int;
+                nheads=8,
+                qkv_bias=false,
+                attn_dropout_prob=0.0,
+                proj_dropout_prob=0.0,
+                sr_ratio=(1,1),
+                sr_method=:conv)
 
-Flux.@layer :expand SRProjection
+Construct a Spatial Reduction Attention (SRA) layer as used in PVT and Twins. This is a variant of
+multi-head self-attention designed to reduce computational cost on high-resolution feature maps by 
+spatially downsampling the keys and values before attention. The reduction can be performed using 
+convolutional or pooling methods.
 
-function SRProjection(dim::Integer; qkv_bias=false, sr_ratio=(1,1), sr_method=:conv)
-    # Validate Arguments
-    @argcheck all(x -> x >= 1, sr_ratio)
-    @argcheck sr_method in (:conv, :pool)
-
-    # Construct SR Layer
-    sr = identity
-    D = length(sr_ratio)  # Spatial Dimensions
-    if any(sr_ratio .> 1)
-        sr = Flux.Chain(
-            Base.Fix2(permutedims, (2:D+1...,1,D+2)), 
-            sr_method == :conv ? Flux.Conv(sr_ratio, dim=>dim, stride=sr_ratio) : Flux.MeanPool(sr_ratio),
-            Base.Fix2(permutedims, (D+1,1:D...,D+2)),
-            Flux.LayerNorm(dim)
-        )
-    end
-
-    # Build SRProjection
-    return SRProjection(
-        sr,
-        Flux.Dense(dim, dim; bias=qkv_bias), 
-        Flux.Dense(dim, dim*2; bias=qkv_bias), 
-    )
-end
-
-function (m::SRProjection)(x::AbstractArray{<:Real,N}) where N
-    C = size(x, 1)  # Channel Dimension
-    O = size(x, N)  # Obs Dimension
-    k, v = @pipe m.sr(x) |> reshape(_, (C,:,O)) |> m.kv |> Flux.chunk(_, 2; dims=1)
-    q = reshape(m.q(x), (C,:,O))
-    return (q, k, v)
-end
-
+# Arguments
+- `dim`: Dimensionality of the input feature embeddings.
+- `nheads`: Number of parallel attention heads. Default is `8`.
+- `qkv_bias`: Whether to add learnable bias terms to query, key, and value projections.
+- `attn_dropout_prob`: Dropout probability applied to the attention weights.
+- `proj_dropout_prob`: Dropout probability applied after the output projection.
+- `sr_ratio`: Spatial reduction ratio `(height, width)` applied to keys and values. `(1,1)` means no reduction.
+- `sr_method`: Method used for spatial reduction. Must be one of `:conv` or `:pool`.
+"""
 struct SRAttention{SR,Q,KV,P,AD}
     nheads::Int
     sr::SR
@@ -245,18 +186,6 @@ function (m::SRAttention)(x::AbstractArray{<:Real,N}) where N
     return reshape(m.proj(y), size(x))
 end
 
-struct WindowedAttention{D,E,W<:NTuple{D},QKV,AD,P}
-    nheads::Int
-    window_size::W
-    shift_size::W
-    position_embedding::E
-    qkv_layer::QKV
-    attn_drop::AD
-    projection::P
-end
-
-Flux.@layer :expand WindowedAttention
-
 """
     WindowedAttention(dim::Integer; window_size=(7,7), shift_size=(0,0),
                       position_embedding=false, nheads=8, qkv_bias=false,
@@ -277,6 +206,18 @@ windows can be shifted by `shift_size` to allow cross-window connections.
 - `attn_dropout_prob`: Dropout probability applied to the attention weights.
 - `proj_dropout_prob`: Dropout probability applied to the output projection.
 """
+struct WindowedAttention{D,E,W<:NTuple{D},QKV,AD,P}
+    nheads::Int
+    window_size::W
+    shift_size::W
+    position_embedding::E
+    qkv_layer::QKV
+    attn_drop::AD
+    projection::P
+end
+
+Flux.@layer :expand WindowedAttention
+
 function WindowedAttention(dim::Integer; window_size=(7,7), shift_size=(0,0), position_embedding=false, nheads=8, qkv_bias=false, attn_dropout_prob=0.0, proj_dropout_prob=0.0)
     @assert dim % nheads==0 "planes should be divisible by nheads"
 
