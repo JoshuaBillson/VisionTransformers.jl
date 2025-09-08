@@ -1,3 +1,30 @@
+"""
+    SWIN(config::Symbol; kw...)
+    SWIN(embed_dims, depths, nheads;
+         window_size=7, position_embedding=true, mlp_ratio=4,
+         qkv_bias=true, dropout=0.1, drop_path=0.0,
+         inchannels=3, nclasses=1000)
+
+Construct a Swin Transformer model for image classification or feature
+extraction. The architecture is composed of multiple stages of
+Shifted Windowed Multi-Head Self-Attention (SW-MSA) and MLP blocks.
+The model progressively merges patches while increasing channel
+dimension, enabling hierarchical feature learning.
+
+# Arguments
+- `config`: One of `:tiny`, `:small`, `:base`, or `:large`.
+- `embed_dims`: Embedding dimension for each stage of the network.
+- `depths`: Number of transformer blocks in each stage.
+- `nheads`: Number of attention heads in each stage.
+- `window_size`: Spatial size of the attention window. Default is `7`.
+- `position_embedding`: Whether to include learnable relative position embeddings in attention.
+- `mlp_ratio`: Expansion ratio for the hidden dimension of the MLP relative to the embedding dimension. Default is `4`.
+- `qkv_bias`: Whether to add bias to query, key, and value projections.
+- `dropout`: Dropout probability applied to MLP and attention outputs.
+- `drop_path`: Probability for stochastic depth (drop-path) regularization.
+- `inchannels`: Number of input image channels. Default is `3`.
+- `nclasses`: Number of output classes for classification. Default is `1000`.
+"""
 function SWIN(config::Symbol; kw...)
     @match config begin
         :tiny => SWIN(
