@@ -71,7 +71,7 @@ function _relative_position_index(window_size::NTuple{2,Int})
     coords = hcat(map(collect, Iterators.product(1:Wx, 1:Wy))...)  # Shape: 2, Wx*Wy
 
     # Compute relative coordinates
-    relative_coords = Flux.unsqueeze(coords, 3) .- Flux.unsqueeze(coords, 2)  # Shape: 2, Wx*Wy, Wx*Wy
+    relative_coords = Flux.unsqueeze(coords; dims=3) .- Flux.unsqueeze(coords; dims=2)  # Shape: 2, Wx*Wy, Wx*Wy
 
     # Shift to start from 0
     relative_coords[1, :, :] .+= Wx - 1
@@ -89,7 +89,7 @@ function _relative_position_index(window_size::NTuple{3,Int})
     coords = hcat(map(collect, Iterators.product(1:Wx, 1:Wy, 1:Wz))...)
 
     # Compute relative coordinates: shape (3, num_positions, num_positions)
-    relative_coords = Flux.unsqueeze(coords, 3) .- Flux.unsqueeze(coords, 2)
+    relative_coords = Flux.unsqueeze(coords; dims=3) .- Flux.unsqueeze(coords; dims=2)
 
     # Shift to start from 0
     relative_coords[1, :, :] .+= Wx - 1
