@@ -4,7 +4,7 @@ CurrentModule = VisionTransformers
 
 # VisionTransformers
 
-[VisionTransformers](https://github.com/JoshuaBillson/VisionTransformers.jl) is a pure Julia package implementing various vision transformer models in Flux..
+[VisionTransformers](https://github.com/JoshuaBillson/VisionTransformers.jl) is a pure Julia package implementing various vision transformer models in Flux.
 
 ```@index
 ```
