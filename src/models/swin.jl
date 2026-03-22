@@ -52,6 +52,10 @@ end
 
 function SWIN(embed_dims, depths, nheads; window_size=7, position_embedding=true, mlp_ratio=4, qkv_bias=true, dropout=0.1, drop_path=0.0, inchannels=3, nclasses=1000)
     @argcheck length(embed_dims) == length(depths) == length(nheads)
+
+    # Get Per-Block Path Drop Rate
+    drop_path_rates = _per_layer_drop_path(drop_path, depths)
+
     return Flux.Chain(
         # Patch Embedding
         Flux.Conv((4,4), inchannels=>embed_dims[1], stride=(4,4)),
@@ -71,7 +75,7 @@ function SWIN(embed_dims, depths, nheads; window_size=7, position_embedding=true
                 mlp_ratio, 
                 qkv_bias, 
                 dropout, 
-                drop_path
+                drop_path=drop_path_rates[i]
             ) for i in eachindex(embed_dims)]...
         ),
 
@@ -85,16 +89,19 @@ function SWIN(embed_dims, depths, nheads; window_size=7, position_embedding=true
 end
 
 function SWINStage(dims; nheads=8, window_size=7, position_embedding=true, depth=4, mlp_ratio=4, qkv_bias=false, dropout=0., drop_path=0., merge_patches=true)
+    drop_path = drop_path isa Number ? repeat([drop_path], depth) : drop_path
+    @argcheck length(drop_path) == depth
     Flux.Chain(
         merge_patches ? PatchMerging(dims÷2) : identity,
-        [SWINBlock(dims; window_size, position_embedding, nheads, mlp_ratio, qkv_bias, window_shift=((i%2)==0), dropout, drop_path) for i in 1:depth]..., 
+        [SWINBlock(dims; window_size, position_embedding, nheads, mlp_ratio, qkv_bias, window_shift=((i%2)==0), dropout, drop_path=drop_path[i]) for i in 1:depth]..., 
     )
 end
 
 function SWINBlock(dim::Int; window_size=7, position_embedding=true, nheads=8, mlp_ratio=4, qkv_bias=false, window_shift=false, dropout=0.0, drop_path=0.0)
+    @argcheck 0 <= drop_path < 1
+    @argcheck window_size > 0
     window_size = (window_size,window_size)
     shift_size = window_shift ? (window_size .÷ 2) : (0,0)
-    #shift_size = (0,0)
     Flux.Chain(
         Flux.SkipConnection(
             Flux.Chain(

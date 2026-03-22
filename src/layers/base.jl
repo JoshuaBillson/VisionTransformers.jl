@@ -11,6 +11,10 @@ Build a 2-layer multi-layer-perceptron.
 - `act`: The activation function following the first Dense layer.
 """
 function MLP(indims, hiddendims, outdims; dropout=0.0, act=Flux.gelu)
+    @argcheck indims > 0
+    @argcheck hiddendims > 0
+    @argcheck outdims > 0
+    @argcheck 0 <= dropout < 1
     return Flux.Chain(
         Flux.Dense(indims => hiddendims, act), 
         Flux.Dropout(dropout), 
@@ -19,91 +23,42 @@ function MLP(indims, hiddendims, outdims; dropout=0.0, act=Flux.gelu)
     )
 end
 
-struct PositionEmbedding{E}
-    embedding::E
-end
+"""
+    SeparableConv(dim, kernel::NTuple{N,Int}, stride::NTuple{N,Int}; bias=false) where N
 
-Flux.@layer :expand PositionEmbedding
+Build a separable convolution layer consisting of a depthwise convolution followed by a pointwise convolution.
 
-PositionEmbedding(dim::Int, seqlength::Int; init=zeros32) = PositionEmbedding(init((dim, seqlength, 1)))
-function PositionEmbedding(dim::Int, imsize::Tuple, patchsize::Tuple; class_token=false, init=zeros32)
-    @argcheck length(imsize) == length(patchsize)
-    seqlength = prod(imsize .÷ patchsize) + (class_token ? 1 : 0)
-    return PositionEmbedding(dim, seqlength; init)
-end
-
-(m::PositionEmbedding)(x::AbstractArray{<:Real,3}) = x .+ m.embedding
-function (m::PositionEmbedding)(x::AbstractArray{<:Real,N}) where N
-    return x .+ reshape(m.embedding, (:,size(x)[2:N-1]...,1))
-end
-
-struct RelativePositionEmbedding{B,I}
-    relative_position_bias::B
-    relative_position_index::I
-end
-
-Flux.@layer :expand RelativePositionEmbedding trainable=(relative_position_bias,)
-
-function RelativePositionEmbedding(dim::Int, nheads::Int, window_size::Tuple; init=zeros32)
-    @argcheck all(window_size .> 0)
+# Parameters
+- `dim`: The number of input and output channels.
+- `kernel`: The size of the convolution kernel.
+- `stride`: The stride of the convolution.
+- `bias`: Whether to include a bias term in the pointwise convolution.
+"""
+function SeparableConv(dim, kernel::NTuple{N,Int}, stride::NTuple{N,Int}; bias=false) where N
     @argcheck dim > 0
-    @argcheck nheads > 0
-    num_positions = prod((2 .* window_size) .- 1)
-    relative_position_bias = init((nheads, num_positions))
-    relative_position_index = _relative_position_index(window_size)
-    return RelativePositionEmbedding(relative_position_bias, relative_position_index)
+    @argcheck all(kernel .> 0)
+    @argcheck all(stride .> 0)
+    return Flux.Chain(
+        Flux.DepthwiseConv(kernel, dim=>dim; pad=Flux.SamePad(), stride, bias=false), 
+        Flux.Conv(tuple([1 for _ in 1:N]...), dim=>dim; pad=Flux.SamePad(), stride=tuple([1 for _ in 1:N]...), bias),
+        Flux.BatchNorm(dim)
+    )
 end
 
-function (m::RelativePositionEmbedding)(x)
-    #relative_position_index = reshape(m.relative_position_index, :)
-    #relative_position_bias = m.relative_position_bias[:,relative_position_index]
-    #relative_position_bias = reshape(relative_position_bias, (:, size(x)[1:2]..., 1)) # [nH x Ww*Wh x Ww*Wh x 1]
-    relative_position_bias = Flux.unsqueeze(m.relative_position_bias[:,m.relative_position_index]; dims=4)
-    relative_position_bias = permutedims(relative_position_bias, (2,3,1,4)) # [Ww*Wh x Ww*Wh x nH x 1]
-    return relative_position_bias .+ x
-end
+"""
+    Tokens(dim, ntokens; init=rand32)
 
-Flux.NNlib.apply_attn_bias(logits, bias::RelativePositionEmbedding) = bias(logits)
+Learnable token embedding layer that prepends a specified number of learnable tokens to the input sequence.
 
-function _relative_position_index(window_size::NTuple{2,Int})
-    # Generate coordinates
-    Wy, Wx = window_size  # Window is (W x H) = (cols x rows) = (Y x X) in matrix coordinates
-    coords = hcat(map(collect, Iterators.product(1:Wx, 1:Wy))...)  # Shape: 2, Wx*Wy
+# Parameters
+- `dim`: The dimensionality of the tokens.
+- `ntokens`: The number of learnable tokens to prepend.
+- `init`: A function to initialize the token embeddings (default is `rand32`).
 
-    # Compute relative coordinates
-    relative_coords = Flux.unsqueeze(coords; dims=3) .- Flux.unsqueeze(coords; dims=2)  # Shape: 2, Wx*Wy, Wx*Wy
-
-    # Shift to start from 0
-    relative_coords[1, :, :] .+= Wx - 1
-    relative_coords[2, :, :] .+= Wy - 1
-
-    # Calculate relative position index
-    relative_coords[2, :, :] .*= 2 * Wx - 1
-    relative_position_index = dropdims(sum(relative_coords, dims=1), dims=1)
-    return relative_position_index .+ 1  # adjust for 1-based indexing
-end
-
-function _relative_position_index(window_size::NTuple{3,Int})
-    # Generate coordinates: shape (3, Wx*Wy*Wz)
-    Wy, Wx, Wz = window_size # Window is (W x H x D) = (cols x rows x pages) = (Y x X x Z) in matrix coordinates
-    coords = hcat(map(collect, Iterators.product(1:Wx, 1:Wy, 1:Wz))...)
-
-    # Compute relative coordinates: shape (3, num_positions, num_positions)
-    relative_coords = Flux.unsqueeze(coords; dims=3) .- Flux.unsqueeze(coords; dims=2)
-
-    # Shift to start from 0
-    relative_coords[1, :, :] .+= Wx - 1
-    relative_coords[2, :, :] .+= Wy - 1
-    relative_coords[3, :, :] .+= Wz - 1
-
-    # Calculate relative position index
-    relative_coords[2, :, :] .*= (2*Wx - 1)
-    relative_coords[3, :, :] .*= (2*Wx - 1) * (2*Wy - 1)
-    relative_position_index = dropdims(sum(relative_coords, dims=1), dims=1)
-    return relative_position_index .+ 1  # adjust for 1-based indexing
-end
-
-
+# Input
+A tensor of shape `CLN` where C is the embedding dimension, L is the sequence length, and N is the batch size. 
+The output will have shape `C(L+ntokens)N` with the learnable tokens prepended to the input sequence.
+"""
 struct Tokens{T}
     tokens::T
 end
@@ -116,6 +71,22 @@ function (m::Tokens)(x::AbstractArray{T,3}) where {T}
     tokens = m.tokens .* Flux.ones_like(x, T, (1, 1, size(x, 3)))
     return hcat(tokens, x)
 end
+
+"""
+    StripTokens(ntokens)
+
+Layer that removes a specified number of tokens from the beginning of the input sequence.
+
+# Parameters
+- `ntokens`: The number of tokens to remove from the beginning of the sequence.
+"""
+struct StripTokens
+    ntokens::Int
+end
+
+Flux.@layer :expand StripTokens
+
+(m::StripTokens)(x::AbstractArray{<:Real,3}) = x[:, m.ntokens+1:end, :]
 
 struct PatchMerging{D,N}
     reduction::D

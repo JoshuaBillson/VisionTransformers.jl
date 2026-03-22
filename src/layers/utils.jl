@@ -26,17 +26,18 @@ end
 seq2img(x::AbstractArray{<:Any,4}) = permutedims(x, (2,3,1,4))
 seq2img(x::AbstractArray{<:Any,5}) = permutedims(x, (2,3,4,1,5))
 
-imsize(x::AbstractArray{<:Any,4}) = size(x)[1:2]
-imsize(x::AbstractArray{<:Any,5}) = size(x)[1:3]
-function imsize(x::AbstractArray{<:Any,3})
-    S = isqrt(size(x,2))
-    return (S,S)
-end
+imsize(x::AbstractArray{<:Any,N}) where N = size(x)[1:N-2]
 
 seconddimmean(x) = dropdims(mean(x; dims=2); dims=2)
 
-rand32(x::Tuple) = Flux.rand32(x...)
+rand32(x::Tuple) = rand32(x...)
+rand32(xs::Vararg{I}) where I <: Integer = Flux.rand32(xs...)
 
-zeros32(x::Tuple) = Flux.zeros32(x...)
+zeros32(x::Tuple) = zeros32(x...)
+zeros32(xs::Vararg{I}) where I <: Integer = Flux.zeros32(xs...)
 
-randn32(x::Tuple) = Flux.randn32(x...)
+randn32(x::Tuple) = randn32(x...)
+randn32(xs::Vararg{I}) where I <: Integer = Flux.randn32(xs...)
+
+trunc_normal(x::Tuple) = trunc_normal(x...)
+trunc_normal(xs::Vararg{I}) where I <: Integer = Flux.truncated_normal(xs..., std=0.02)

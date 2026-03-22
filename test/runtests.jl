@@ -19,4 +19,6 @@ end
 
     # Test SWIN
     test_model(SWIN(:tiny))
+
+    test_model(Twins(:small))
 end

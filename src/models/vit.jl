@@ -3,7 +3,8 @@
     ViT(dim::Integer, nheads::Integer, depth::Integer;
         imsize=(224,224), patchsize=(16,16), inchannels=3,
         nclasses=1000, mlp_ratio=4, qkv_bias=true,
-        dropout=0.1, drop_path=0.0, class_token=false)
+        dropout=0.1, attn_dropout=0.1, drop_path=0.0, 
+        class_token=false, register_tokens=0)
 
 Construct a Vision Transformer (ViT) model for image classification.  
 The input image is split into non-overlapping patches, each patch is
@@ -22,9 +23,11 @@ be prepended to the patch sequence for classification.
 - `nclasses`: Number of output classes for classification. Default is `1000`.
 - `mlp_ratio`: Expansion ratio for the hidden dimension of the MLP relative to `dim`. Default is `4`.
 - `qkv_bias`: Whether to add a bias to query, key, and value projections. Default is `true`.
-- `dropout`: Dropout probability applied to embeddings, MLP, and attention outputs.
-- `drop_path`: Probability for stochastic depth (drop-path) regularization.
+- `dropout`: Dropout probability applied to embeddings, MLP, and attention outputs. Default is `0.1`.
+- `attn_dropout`: Dropout probability applied to attention weights. Default is `0.1`.
+- `drop_path`: Probability for stochastic depth (drop-path) regularization. Default is `0.0`.
 - `class_token`: Whether to prepend a learnable class token to the patch sequence for classification. If `false`, global average pooling is applied instead.
+- `register_tokens`: Number of additional learnable tokens to prepend to the patch sequence. Default is `0`.
 """
 function ViT(config::Symbol; kw...)
     @match config begin
@@ -36,9 +39,24 @@ function ViT(config::Symbol; kw...)
     end
 end
 
-function ViT(dim::Integer, nheads::Integer, depth::Integer; imsize=(224,224), patchsize=(16,16), inchannels=3, nclasses=1000, mlp_ratio=4, qkv_bias=true, dropout=0.1, drop_path=0.0, class_token=false)
+function ViT(dim::Integer, nheads::Integer, depth::Integer; imsize=(224,224), patchsize=(16,16), inchannels=3, nclasses=1000, mlp_ratio=4, qkv_bias=true, dropout=0.1, attn_dropout=0.1, drop_path=0.0, class_token=false, register_tokens=0)
+    @argcheck dim > 0
+    @argcheck nheads > 0
+    @argcheck depth > 0
+    @argcheck all(imsize .> 0)
+    @argcheck all(patchsize .> 0)
+    @argcheck inchannels > 0
+    @argcheck nclasses > 0
+    @argcheck mlp_ratio > 0
+    @argcheck 0 <= dropout < 1
+    @argcheck 0 <= attn_dropout < 1
+    @argcheck 0 <= drop_path < 1
+    @argcheck register_tokens >= 0
+    @argcheck all(imsize .% patchsize .== 0)
+
     # Get Per-Block Path Drop Rate
     drop_path_rates = _per_layer_drop_path(drop_path, depth)
+    extra_tokens = (class_token ? 1 : 0) + register_tokens
 
     # Construct ViT
     Flux.Chain(
@@ -50,14 +68,15 @@ function ViT(dim::Integer, nheads::Integer, depth::Integer; imsize=(224,224), pa
             Flux.Chain(
                 Flux.Conv(patchsize, inchannels=>dim, stride=patchsize), 
                 img2seq,
-                Flux.LayerNorm(dim),
-                class_token ? Tokens(dim, 1; init=zeros32) : identity,
-                PositionEmbedding(dim, imsize, patchsize; class_token, init=randn32),
+                extra_tokens > 0 ? Tokens(dim, extra_tokens; init=trunc_normal) : identity,
+                AbsolutePositionEmbedding(dim, imsize, patchsize; init=randn32, extra_tokens),
                 Flux.Dropout(dropout),
             ),
 
             # Encoder Blocks
-            Flux.Chain([ViTBlock(dim; nheads, mlp_ratio, qkv_bias, dropout, drop_path=drop_path_rates[i]) for i in 1:depth]...),
+            Flux.Chain(
+                [ViTBlock(dim; nheads, mlp_ratio, qkv_bias, dropout, attn_dropout, drop_path=drop_path_rates[i]) for i in 1:depth]...
+            ),
         ),
 
         # Classification Head
@@ -69,12 +88,12 @@ function ViT(dim::Integer, nheads::Integer, depth::Integer; imsize=(224,224), pa
     )
 end
 
-function ViTBlock(dim::Integer; nheads=8, mlp_ratio=4, qkv_bias=true, dropout=0.0, drop_path=0.0)
+function ViTBlock(dim::Integer; nheads=8, mlp_ratio=4, qkv_bias=true, dropout=0.0, attn_dropout=0.0, drop_path=0.0)
     Flux.Chain(
         Flux.SkipConnection(
             Flux.Chain(
                 Flux.LayerNorm(dim),
-                MultiHeadAttention(dim; nheads, qkv_bias, attn_dropout_prob=dropout, proj_dropout_prob=dropout),
+                MultiHeadAttention(dim; nheads, qkv_bias, attn_dropout_prob=attn_dropout, proj_dropout_prob=dropout),
                 Flux.Dropout(drop_path, dims=3)
             ), 
             +

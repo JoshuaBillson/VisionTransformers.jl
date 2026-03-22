@@ -16,6 +16,7 @@ ViT
 CvT
 PVT
 SWIN
+Twins
 ```
 
 # Layers
@@ -24,7 +25,14 @@ MultiHeadAttention
 ConvAttention
 SRAttention
 WindowedAttention
+AbsolutePositionEmbedding
+VariablePositionEmbedding
+RelativePositionEmbedding
+PEG
 MLP
+SeparableConv
+Tokens
+StripTokens
 ```
 
 # Utilities
